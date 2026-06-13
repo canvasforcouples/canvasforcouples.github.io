@@ -7,7 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;overflow:hidden;background:#F7F5F0;font-family:'Inter',sans-serif;}
+html,body{height:100%;overflow:hidden;background:#E8E5DF;font-family:'Inter',sans-serif;}
 
 #topbar{
   position:fixed;top:0;left:0;right:0;height:44px;
@@ -34,11 +34,39 @@ html,body{height:100%;overflow:hidden;background:#F7F5F0;font-family:'Inter',san
 .hdr-btn:hover{background:#fff;color:#1a1a1a;}
 .hdr-btn.accent{background:#1a1a1a;color:#fff;border-color:#1a1a1a;}
 
-#cv{position:fixed;top:44px;left:0;right:0;bottom:0;touch-action:none;overflow:hidden;}
-canvas{position:absolute;top:0;left:0;}
+/* The viewport – clips the canvas world */
+#viewport{
+  position:fixed;top:44px;left:0;right:0;bottom:0;
+  overflow:hidden;touch-action:none;
+  background:#E8E5DF;
+  background-image:radial-gradient(circle,#ccc9c1 1px,transparent 1px);
+  background-size:24px 24px;
+}
+
+/* The world that gets panned/zoomed */
+#world{
+  position:absolute;
+  top:0;left:0;
+  transform-origin:0 0;
+  /* size set by JS to CANVAS_W × CANVAS_H */
+}
+
+/* The actual drawing canvases */
+#world canvas{
+  position:absolute;top:0;left:0;
+  display:block;
+}
 #drawCanvas{z-index:1;}
 #remoteCanvas{z-index:2;pointer-events:none;}
 
+/* Image overlay layer – sits above canvases, pointer-events managed per-element */
+#imgLayer{
+  position:absolute;top:0;left:0;z-index:3;
+  width:100%;height:100%;
+  pointer-events:none; /* children override */
+}
+
+/* ── Tool button ── */
 #toolBtn{
   position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
   width:52px;height:52px;border-radius:50%;background:#1a1a1a;border:none;
@@ -76,6 +104,45 @@ canvas{position:absolute;top:0;left:0;}
 .slider-val{font-size:11px;color:#AAA;min-width:26px;text-align:right;}
 .tp-sep{height:1px;background:#F0EDE8;margin:12px 0;}
 
+/* ── Image widget ── */
+.img-widget{
+  position:absolute;
+  pointer-events:all;
+  cursor:move;
+  user-select:none;
+  -webkit-user-select:none;
+}
+.img-widget img{
+  display:block;width:100%;height:100%;
+  object-fit:fill;
+  pointer-events:none;
+}
+.img-widget.selected{
+  outline:2px solid #3B82F6;
+  outline-offset:1px;
+}
+/* resize handles */
+.img-widget .handle{
+  position:absolute;width:10px;height:10px;
+  background:#fff;border:2px solid #3B82F6;border-radius:2px;
+  cursor:nwse-resize;display:none;z-index:10;
+}
+.img-widget.selected .handle{display:block;}
+.handle.nw{top:-5px;left:-5px;cursor:nw-resize;}
+.handle.ne{top:-5px;right:-5px;cursor:ne-resize;}
+.handle.sw{bottom:-5px;left:-5px;cursor:sw-resize;}
+.handle.se{bottom:-5px;right:-5px;cursor:se-resize;}
+/* delete button */
+.img-widget .del-btn{
+  position:absolute;top:-14px;right:-14px;
+  width:22px;height:22px;border-radius:50%;
+  background:#EF4444;border:2px solid #fff;
+  color:#fff;font-size:12px;line-height:18px;text-align:center;
+  cursor:pointer;display:none;z-index:10;
+}
+.img-widget.selected .del-btn{display:block;}
+
+/* ── Modals ── */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(6px);
   z-index:600;display:flex;align-items:center;justify-content:center;}
 .modal-bg.hidden{display:none;}
@@ -92,6 +159,7 @@ canvas{position:absolute;top:0;left:0;}
   font-family:'Inter',sans-serif;font-size:14px;font-weight:500;cursor:pointer;}
 .mbtn.pri{background:#1a1a1a;color:#fff;}.mbtn.sec{background:#F5F3EF;color:#555;}
 
+/* ── Toast & pills ── */
 #toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%) translateY(6px);
   background:#1a1a1a;color:#fff;font-size:13px;font-weight:500;
   padding:9px 18px;border-radius:24px;
@@ -117,7 +185,6 @@ canvas{position:absolute;top:0;left:0;}
 </head>
 <body>
 
-<!-- Loading overlay shown until Supabase is ready -->
 <div id="initOverlay">Загрузка...</div>
 
 <div id="topbar">
@@ -137,9 +204,12 @@ canvas{position:absolute;top:0;left:0;}
 
 <div id="loadingBar"></div>
 
-<div id="cv">
-  <canvas id="drawCanvas"></canvas>
-  <canvas id="remoteCanvas"></canvas>
+<div id="viewport">
+  <div id="world">
+    <canvas id="drawCanvas"></canvas>
+    <canvas id="remoteCanvas"></canvas>
+    <div id="imgLayer"></div>
+  </div>
 </div>
 
 <button id="toolBtn">✏️</button>
@@ -184,13 +254,11 @@ canvas{position:absolute;top:0;left:0;}
 <div id="zoomPill">100%</div>
 <div id="toast"></div>
 
-<!-- Room modal -->
 <div class="modal-bg hidden" id="roomModal">
   <div class="modal">
     <h2>Войти в комнату 🎨</h2>
     <p>Введи код комнаты и поделись им с другом — вы окажетесь на одном полотне. Полотно сохраняется между сессиями.</p>
-    <input id="roomInput" maxlength="20" placeholder="например: cats42"
-      autocomplete="off" spellcheck="false"/>
+    <input id="roomInput" maxlength="20" placeholder="например: cats42" autocomplete="off" spellcheck="false"/>
     <div class="modal-btns">
       <button class="mbtn sec" id="btnRandom">🎲 Случайная</button>
       <button class="mbtn pri" id="btnJoin">Войти →</button>
@@ -200,545 +268,776 @@ canvas{position:absolute;top:0;left:0;}
 
 <input type="file" id="imgFile" accept="image/*" style="display:none"/>
 
-<!-- Load Supabase, then bootstrap app -->
 <script>
-(function() {
-  'use strict';
+(function () {
+'use strict';
 
-  // ── Constants ──
-  const SUPA_URL = 'https://ayyxlzvrnfscybzvuonz.supabase.co';
-  const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF5eXhsenZybmZzY3lienZ1b256Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMzY0MTEsImV4cCI6MjA5NjkxMjQxMX0.NXOZZSRuiHakdavH6_qosdgI5sfVad5hliEP9ztBedw';
+// ── Config ──
+const CANVAS_W = 1920;
+const CANVAS_H = 1080;
+const SUPA_URL = 'https://ayyxlzvrnfscybzvuonz.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF5eXhsenZybmZzY3lienZ1b256Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMzY0MTEsImV4cCI6MjA5NjkxMjQxMX0.NXOZZSRuiHakdavH6_qosdgI5sfVad5hliEP9ztBedw';
 
-  const myId    = Math.random().toString(36).slice(2,12);
-  const myColor = '#' + Math.floor(Math.random()*0x555555+0x666666).toString(16);
-  const myName  = 'peer-' + Math.floor(Math.random()*900+100);
+const myId    = Math.random().toString(36).slice(2, 12);
+const myColor = '#' + Math.floor(Math.random() * 0x555555 + 0x666666).toString(16);
+const myName  = 'peer-' + Math.floor(Math.random() * 900 + 100);
 
-  let supa = null;
-  let ROOM = (new URLSearchParams(location.search).get('r')||'')
-    .toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,20);
+let supa = null;
+let ROOM = (new URLSearchParams(location.search).get('r') || '')
+  .toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
 
-  // ── Toast ──
-  let _tt;
-  function toast(msg, dur=2800) {
-    const el = document.getElementById('toast');
-    el.textContent = msg; el.classList.add('show');
-    clearTimeout(_tt); _tt = setTimeout(() => el.classList.remove('show'), dur);
+// ── Toast ──
+let _tt;
+function toast(msg, dur = 2800) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(_tt); _tt = setTimeout(() => el.classList.remove('show'), dur);
+}
+
+// ── Load Supabase SDK ──
+function loadSupabase() {
+  return new Promise((resolve, reject) => {
+    if (window.supabase) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Supabase CDN недоступен'));
+    document.head.appendChild(s);
+  });
+}
+
+// ── Room modal ──
+function setupRoomModal() {
+  const modal   = document.getElementById('roomModal');
+  const input   = document.getElementById('roomInput');
+  const btnRnd  = document.getElementById('btnRandom');
+  const btnJoin = document.getElementById('btnJoin');
+
+  btnRnd.addEventListener('click', () => {
+    input.value = Math.random().toString(36).slice(2, 7);
+  });
+  function doJoin() {
+    let v = (input.value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20);
+    if (!v) v = Math.random().toString(36).slice(2, 7);
+    ROOM = v;
+    const url = new URL(location.href);
+    url.searchParams.set('r', ROOM);
+    history.replaceState({}, '', url);
+    modal.classList.add('hidden');
+    initApp();
+  }
+  btnJoin.addEventListener('click', doJoin);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
+}
+
+// ── Entry ──
+loadSupabase().then(() => {
+  supa = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+  document.getElementById('initOverlay').classList.add('hidden');
+  setupRoomModal();
+  if (!ROOM) {
+    document.getElementById('roomModal').classList.remove('hidden');
+  } else {
+    initApp();
+  }
+}).catch(err => {
+  document.getElementById('initOverlay').textContent = '⚠️ Не удалось загрузить Supabase. Проверь соединение.';
+  console.error(err);
+});
+
+// ══════════════════════════════════════════════════════════════
+//  MAIN APP
+// ══════════════════════════════════════════════════════════════
+function initApp() {
+  document.getElementById('roomPill').textContent = ROOM;
+  document.getElementById('roomPill').addEventListener('click', () => {
+    if (confirm('Сменить комнату? Текущее полотно останется сохранённым.'))
+      location.href = location.pathname;
+  });
+  document.title = 'canvas · ' + ROOM;
+
+  const viewport = document.getElementById('viewport');
+  const world    = document.getElementById('world');
+  const dc       = document.getElementById('drawCanvas');
+  const rc       = document.getElementById('remoteCanvas');
+  const imgLayer = document.getElementById('imgLayer');
+  const ctx      = dc.getContext('2d');
+  const rctx     = rc.getContext('2d');
+
+  // ── Fixed canvas size ──
+  dc.width = rc.width = CANVAS_W;
+  dc.height = rc.height = CANVAS_H;
+  world.style.width  = CANVAS_W + 'px';
+  world.style.height = CANVAS_H + 'px';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // ── Pan / Zoom (transform on #world) ──
+  let panX = 0, panY = 0, zoom = 1;
+  let panning = false, pStart = {x:0, y:0}, spaceDown = false;
+
+  function fitToScreen() {
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    const zx = vw / CANVAS_W, zy = vh / CANVAS_H;
+    zoom = Math.min(zx, zy) * 0.92;
+    panX = (vw - CANVAS_W * zoom) / 2;
+    panY = (vh - CANVAS_H * zoom) / 2;
+    applyTransform();
   }
 
-  // ── Load Supabase SDK dynamically, then boot ──
-  function loadSupabase() {
-    return new Promise((resolve, reject) => {
-      if (window.supabase) { resolve(); return; }
-      const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error('Supabase CDN недоступен'));
-      document.head.appendChild(s);
-    });
+  function applyTransform() {
+    world.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+    document.getElementById('zoomPill').textContent = Math.round(zoom * 100) + '%';
   }
 
-  // ── Room modal logic ──
-  function setupRoomModal() {
-    const modal  = document.getElementById('roomModal');
-    const input  = document.getElementById('roomInput');
-    const btnRnd = document.getElementById('btnRandom');
-    const btnJoin= document.getElementById('btnJoin');
+  // Convert viewport coords → canvas coords
+  function vp2cv(x, y) {
+    const r = viewport.getBoundingClientRect();
+    return [(x - r.left - panX) / zoom, (y - r.top - panY) / zoom];
+  }
 
-    btnRnd.addEventListener('click', () => {
-      input.value = Math.random().toString(36).slice(2,7);
-    });
+  function getXY(e) {
+    if (e.touches) return vp2cv(e.touches[0].clientX, e.touches[0].clientY);
+    return vp2cv(e.clientX, e.clientY);
+  }
 
-    function doJoin() {
-      let v = (input.value||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,20);
-      if (!v) v = Math.random().toString(36).slice(2,7);
-      ROOM = v;
-      const url = new URL(location.href);
-      url.searchParams.set('r', ROOM);
-      history.replaceState({}, '', url);
-      modal.classList.add('hidden');
-      initApp();
+  fitToScreen();
+  window.addEventListener('resize', fitToScreen);
+
+  // Wheel zoom
+  viewport.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = viewport.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const d  = e.deltaY < 0 ? 1.1 : 0.9;
+    const nz = Math.min(8, Math.max(0.05, zoom * d));
+    panX = mx - (mx - panX) * (nz / zoom);
+    panY = my - (my - panY) * (nz / zoom);
+    zoom = nz; applyTransform();
+  }, {passive: false});
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space' && !e.target.matches('input,textarea')) {
+      spaceDown = true; viewport.style.cursor = 'grab'; e.preventDefault();
     }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.shiftKey ? redoAction() : undoAction(); }
+    if (e.key === 'Escape') deselectImg();
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedWidget) {
+      if (!e.target.matches('input,textarea')) deleteSelectedImg();
+    }
+  });
+  document.addEventListener('keyup', e => {
+    if (e.code === 'Space') { spaceDown = false; viewport.style.cursor = ''; }
+  });
 
-    btnJoin.addEventListener('click', doJoin);
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
+  // ── Tool state ──
+  let tool = 'pen', color = '#1a1a1a', sz = 5, op = 1;
+  const PALETTE = ['#1a1a1a','#fff','#EF4444','#F97316','#FBBF24','#22C55E','#3B82F6','#8B5CF6','#EC4899','#6B7280'];
+
+  // Color palette
+  const cr = document.getElementById('colorRow');
+  PALETTE.forEach(col => {
+    const s = document.createElement('div');
+    s.className = 'c' + (col === color ? ' on' : '');
+    s.style.background = col;
+    if (col === '#fff') s.style.border = '2px solid #E0DDD8';
+    s.addEventListener('click', () => setColor(col, s));
+    cr.appendChild(s);
+  });
+  const cp = document.createElement('div'); cp.className = 'c c-pick';
+  cp.style.background = 'conic-gradient(red,yellow,lime,cyan,blue,magenta,red)';
+  const ci = document.createElement('input'); ci.type = 'color'; ci.value = '#ff0000';
+  ci.addEventListener('input', e => setColor(e.target.value, cp));
+  cp.appendChild(ci); cr.appendChild(cp);
+
+  function setColor(c, el) {
+    color = c;
+    document.querySelectorAll('#colorRow .c').forEach(x => x.classList.remove('on'));
+    el.classList.add('on');
   }
 
-  // ── Entry point ──
-  loadSupabase().then(() => {
-    supa = window.supabase.createClient(SUPA_URL, SUPA_KEY);
-    document.getElementById('initOverlay').classList.add('hidden');
+  // Tool buttons
+  document.getElementById('toolRow').addEventListener('click', e => {
+    const btn = e.target.closest('[data-tool]');
+    if (!btn) return;
+    if (btn.dataset.tool === 'image') { document.getElementById('imgFile').click(); return; }
+    setTool(btn.dataset.tool);
+    deselectImg();
+  });
 
-    setupRoomModal();
+  function setTool(t) {
+    tool = t;
+    document.querySelectorAll('.t[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+    const icons = {pen:'✏️',brush:'🖌️',marker:'🖊️',eraser:'⬜',line:'╱',rect:'▭',circle:'◯',text:'T',image:'🖼️'};
+    document.getElementById('toolBtn').textContent = icons[t] || '✏️';
+  }
 
-    if (!ROOM) {
-      document.getElementById('roomModal').classList.remove('hidden');
-    } else {
-      initApp();
-    }
-  }).catch(err => {
-    document.getElementById('initOverlay').textContent = '⚠️ Не удалось загрузить Supabase. Проверь соединение.';
-    console.error(err);
+  // Sliders
+  document.getElementById('sizeR').addEventListener('input', function() {
+    sz = +this.value; document.getElementById('szV').textContent = this.value;
+  });
+  document.getElementById('opR').addEventListener('input', function() {
+    op = this.value / 100; document.getElementById('opV').textContent = this.value + '%';
+  });
+
+  // Panel toggle
+  let panelOpen = false;
+  document.getElementById('toolBtn').addEventListener('click', () => {
+    panelOpen = !panelOpen;
+    document.getElementById('toolPanel').classList.toggle('open', panelOpen);
+    document.getElementById('toolBtn').classList.toggle('open', panelOpen);
+  });
+  viewport.addEventListener('pointerdown', () => {
+    if (panelOpen) { panelOpen = false; document.getElementById('toolPanel').classList.remove('open'); document.getElementById('toolBtn').classList.remove('open'); }
   });
 
   // ══════════════════════════════════════════════
-  //  MAIN APP
+  //  IMAGE WIDGETS (positioned div overlays)
   // ══════════════════════════════════════════════
-  function initApp() {
-    document.getElementById('roomPill').textContent = ROOM;
-    document.getElementById('roomPill').addEventListener('click', () => {
-      if (confirm('Сменить комнату? Текущее полотно останется сохранённым.'))
-        location.href = location.pathname;
-    });
-    document.title = 'canvas · ' + ROOM;
+  let selectedWidget = null;
 
-    const cvEl = document.getElementById('cv');
-    const dc   = document.getElementById('drawCanvas');
-    const rc   = document.getElementById('remoteCanvas');
-    const ctx  = dc.getContext('2d');
-    const rctx = rc.getContext('2d');
-
-    // ── Resize ──
-    function resize() {
-      const W = cvEl.clientWidth, H = cvEl.clientHeight;
-      // Preserve pixels only if canvas already has content
-      if (dc.width > 0 && dc.height > 0) {
-        const snap = ctx.getImageData(0, 0, dc.width, dc.height);
-        dc.width = rc.width = W;
-        dc.height = rc.height = H;
-        ctx.putImageData(snap, 0, 0);
-      } else {
-        dc.width = rc.width = W;
-        dc.height = rc.height = H;
-      }
+  function deselectImg() {
+    if (selectedWidget) {
+      selectedWidget.classList.remove('selected');
+      selectedWidget = null;
     }
-    resize();
-    window.addEventListener('resize', () => { resize(); });
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, dc.width, dc.height);
+  }
 
-    // ── Tool state ──
-    let tool = 'pen', color = '#1a1a1a', sz = 5, op = 1;
-    const PALETTE = ['#1a1a1a','#fff','#EF4444','#F97316','#FBBF24','#22C55E','#3B82F6','#8B5CF6','#EC4899','#6B7280'];
-
-    // Build color palette
-    const cr = document.getElementById('colorRow');
-    PALETTE.forEach(col => {
-      const s = document.createElement('div');
-      s.className = 'c' + (col === color ? ' on' : '');
-      s.style.background = col;
-      if (col === '#fff') s.style.border = '2px solid #E0DDD8';
-      s.addEventListener('click', () => setColor(col, s));
-      cr.appendChild(s);
-    });
-    // Color picker
-    const cp = document.createElement('div');
-    cp.className = 'c c-pick';
-    cp.style.background = 'conic-gradient(red,yellow,lime,cyan,blue,magenta,red)';
-    const ci = document.createElement('input');
-    ci.type = 'color'; ci.value = '#ff0000';
-    ci.addEventListener('input', e => setColor(e.target.value, cp));
-    cp.appendChild(ci); cr.appendChild(cp);
-
-    function setColor(c, el) {
-      color = c;
-      document.querySelectorAll('#colorRow .c').forEach(x => x.classList.remove('on'));
-      el.classList.add('on');
-    }
-
-    // Tool buttons
-    document.getElementById('toolRow').addEventListener('click', e => {
-      const btn = e.target.closest('[data-tool]');
-      if (!btn) return;
-      if (btn.dataset.tool === 'image') { document.getElementById('imgFile').click(); return; }
-      setTool(btn.dataset.tool);
-    });
-
-    function setTool(t) {
-      tool = t;
-      document.querySelectorAll('.t[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
-      const icons = {pen:'✏️',brush:'🖌️',marker:'🖊️',eraser:'⬜',line:'╱',rect:'▭',circle:'◯',text:'T',image:'🖼️'};
-      document.getElementById('toolBtn').textContent = icons[t] || '✏️';
-    }
-
-    // Sliders
-    document.getElementById('sizeR').addEventListener('input', function() {
-      sz = +this.value;
-      document.getElementById('szV').textContent = this.value;
-    });
-    document.getElementById('opR').addEventListener('input', function() {
-      op = this.value / 100;
-      document.getElementById('opV').textContent = this.value + '%';
-    });
-
-    // Panel toggle
-    let panelOpen = false;
-    document.getElementById('toolBtn').addEventListener('click', () => {
-      panelOpen = !panelOpen;
-      document.getElementById('toolPanel').classList.toggle('open', panelOpen);
-      document.getElementById('toolBtn').classList.toggle('open', panelOpen);
-    });
-    cvEl.addEventListener('pointerdown', () => { if (panelOpen) {
-      panelOpen = false;
-      document.getElementById('toolPanel').classList.remove('open');
-      document.getElementById('toolBtn').classList.remove('open');
-    }});
-
-    // ── Pan/Zoom ──
-    let panX=0, panY=0, zoom=1, panning=false, pStart={x:0,y:0}, spaceDown=false;
-
-    function applyTransform() {
-      const t = `translate(${panX}px,${panY}px) scale(${zoom})`;
-      dc.style.transform = rc.style.transform = t;
-      dc.style.transformOrigin = rc.style.transformOrigin = '0 0';
-      document.getElementById('zoomPill').textContent = Math.round(zoom*100) + '%';
-    }
-
-    function scr2cv(x, y) {
-      const r = cvEl.getBoundingClientRect();
-      return [(x - r.left - panX) / zoom, (y - r.top - panY) / zoom];
-    }
-
-    function getXY(e) {
-      if (e.touches) return scr2cv(e.touches[0].clientX, e.touches[0].clientY);
-      return scr2cv(e.clientX, e.clientY);
-    }
-
-    cvEl.addEventListener('wheel', e => {
-      e.preventDefault();
-      const r = cvEl.getBoundingClientRect();
-      const mx = e.clientX - r.left, my = e.clientY - r.top;
-      const d = e.deltaY < 0 ? 1.1 : 0.9;
-      const nz = Math.min(10, Math.max(.1, zoom * d));
-      panX = mx - (mx - panX) * (nz / zoom);
-      panY = my - (my - panY) * (nz / zoom);
-      zoom = nz; applyTransform();
-    }, {passive: false});
-
-    document.addEventListener('keydown', e => {
-      if (e.code === 'Space' && !e.target.matches('input,textarea')) {
-        spaceDown = true; cvEl.style.cursor = 'grab'; e.preventDefault();
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-        e.shiftKey ? redoAction() : undoAction();
-      }
-    });
-    document.addEventListener('keyup', e => {
-      if (e.code === 'Space') { spaceDown = false; cvEl.style.cursor = ''; }
-    });
-
-    // ── Drawing ──
-    let drawing=false, startX=0, startY=0, lastX=0, lastY=0, preSnap=null;
-    let strokeBuf = [];
-
-    function applyCtx(c, t, col, s, a) {
-      c.globalCompositeOperation = 'source-over';
-      c.globalAlpha = t === 'marker' ? a * 0.5 : a;
-      c.strokeStyle = t === 'eraser' ? '#ffffff' : col;
-      c.fillStyle   = col;
-      c.lineWidth   = t === 'brush' ? s * 2.5 : s;
-      c.lineCap = 'round'; c.lineJoin = 'round';
-    }
-
-    function drawShape(c, t, x0, y0, x1, y1, col, s, a) {
-      c.save();
-      c.globalCompositeOperation = 'source-over'; c.globalAlpha = a;
-      c.strokeStyle = col; c.lineWidth = s; c.lineCap = 'round'; c.lineJoin = 'round';
-      c.beginPath();
-      if (t === 'line') { c.moveTo(x0,y0); c.lineTo(x1,y1); c.stroke(); }
-      else if (t === 'rect') { c.strokeRect(x0,y0,x1-x0,y1-y0); }
-      else if (t === 'circle') {
-        c.ellipse(x0+(x1-x0)/2, y0+(y1-y0)/2, Math.abs(x1-x0)/2, Math.abs(y1-y0)/2, 0, 0, Math.PI*2);
-        c.stroke();
-      }
-      c.restore();
-    }
-
-    function replayStroke(s, c) {
-      c = c || ctx;
-      if (s.tool === 'text' && s.text) {
-        c.save(); c.globalAlpha = s.op; c.fillStyle = s.color;
-        c.font = `500 ${Math.max(12, s.sz*2)}px Inter,sans-serif`;
-        c.fillText(s.text, s.x, s.y); c.restore(); return;
-      }
-      if (['pen','brush','marker','eraser'].includes(s.tool) && s.pts?.length >= 2) {
-        c.save();
-        c.globalCompositeOperation = 'source-over';
-        c.globalAlpha = s.tool === 'marker' ? s.op * 0.5 : s.op;
-        c.strokeStyle = s.tool === 'eraser' ? '#ffffff' : s.color;
-        c.lineWidth   = s.tool === 'brush' ? s.sz * 2.5 : s.sz;
-        c.lineCap = 'round'; c.lineJoin = 'round';
-        c.beginPath(); c.moveTo(s.pts[0].x, s.pts[0].y);
-        for (let i = 1; i < s.pts.length; i++) c.lineTo(s.pts[i].x, s.pts[i].y);
-        c.stroke(); c.restore(); return;
-      }
-      if (['line','rect','circle'].includes(s.tool)) {
-        drawShape(c, s.tool, s.x0, s.y0, s.x1, s.y1, s.color, s.sz, s.op);
-      }
-    }
-
-    const allStrokes = [];
-
-    function redrawAll() {
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, dc.width, dc.height);
-      allStrokes.forEach(s => replayStroke(s, ctx));
-    }
-
-    // ── Pointer events ──
-    cvEl.addEventListener('pointerdown', onDown);
-    cvEl.addEventListener('pointermove', onMove);
-    cvEl.addEventListener('pointerup',   onUp);
-    cvEl.addEventListener('pointerleave', onUp);
-
-    function onDown(e) {
-      if (e.button === 1 || spaceDown) {
-        panning = true; pStart = {x: e.clientX - panX, y: e.clientY - panY};
-        cvEl.style.cursor = 'grabbing'; return;
-      }
-      if (e.button !== 0) return;
-      e.preventDefault(); cvEl.setPointerCapture(e.pointerId);
-      const [x, y] = getXY(e);
-      if (tool === 'text') { addText(x, y); return; }
-      drawing = true; startX = lastX = x; startY = lastY = y; strokeBuf = [{x, y}];
-      if (['pen','brush','marker','eraser'].includes(tool)) {
-        applyCtx(ctx, tool, color, sz, op);
-        ctx.beginPath(); ctx.moveTo(x, y);
-      } else {
-        preSnap = ctx.getImageData(0, 0, dc.width, dc.height);
-      }
-    }
-
-    function onMove(e) {
-      if (panning) { panX = e.clientX - pStart.x; panY = e.clientY - pStart.y; applyTransform(); return; }
-      const [mx, my] = getXY(e);
-
-      channel.send({ type:'broadcast', event:'cursor', payload:{x:mx, y:my, id:myId, color:myColor, name:myName} });
-
-      if (!drawing) return;
-      e.preventDefault();
-
-      if (['pen','brush','marker','eraser'].includes(tool)) {
-        applyCtx(ctx, tool, color, sz, op);
-        ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(mx, my); ctx.stroke();
-        strokeBuf.push({x:mx, y:my}); lastX = mx; lastY = my;
-        if (strokeBuf.length % 4 === 0) {
-          channel.send({ type:'broadcast', event:'live', payload:{
-            id:myId, tool, color, sz, op, pts: strokeBuf.slice(-8)
-          }});
-        }
-      } else {
-        ctx.putImageData(preSnap, 0, 0);
-        drawShape(ctx, tool, startX, startY, mx, my, color, sz, op);
-      }
-    }
-
-    function onUp(e) {
-      if (panning) { panning = false; cvEl.style.cursor = ''; return; }
-      if (!drawing) return;
-      drawing = false;
-      const [x, y] = getXY(e);
-      if (['line','rect','circle'].includes(tool) && preSnap) {
-        ctx.putImageData(preSnap, 0, 0);
-        drawShape(ctx, tool, startX, startY, x, y, color, sz, op);
-      }
-      const stroke = { tool, color, sz, op, pts: strokeBuf, x0:startX, y0:startY, x1:x, y1:y };
-      saveStroke(stroke);
-      strokeBuf = []; preSnap = null;
-      pushHistory();
-    }
-
-    function addText(x, y) {
-      const r = cvEl.getBoundingClientRect();
-      const inp = document.createElement('input');
-      inp.type = 'text'; inp.placeholder = 'Текст...';
-      inp.style.cssText = `position:fixed;left:${x*zoom+panX+r.left}px;top:${y*zoom+panY+r.top}px;
-        background:transparent;border:none;border-bottom:1.5px solid #1a1a1a;
-        color:${color};font-family:'Inter',sans-serif;font-size:${Math.max(12,sz*2)}px;
-        font-weight:500;outline:none;z-index:500;min-width:120px;`;
-      document.body.appendChild(inp); inp.focus();
-      const commit = () => {
-        const v = inp.value.trim();
-        if (v) {
-          ctx.save(); ctx.globalAlpha = op; ctx.fillStyle = color;
-          ctx.font = `500 ${Math.max(12,sz*2)}px Inter,sans-serif`;
-          ctx.fillText(v, x, y); ctx.restore();
-          saveStroke({tool:'text', color, sz, op, text:v, x, y});
-          pushHistory();
-        }
-        inp.remove();
-      };
-      inp.addEventListener('blur', commit);
-      inp.addEventListener('keydown', e => {
-        if (e.key === 'Enter') inp.blur();
-        if (e.key === 'Escape') { inp.value = ''; inp.blur(); }
-      });
-    }
-
-    // ── Undo/Redo ──
-    let hist = [], histIdx = -1;
-    function pushHistory() {
-      hist = hist.slice(0, histIdx + 1);
-      hist.push(dc.toDataURL());
-      if (hist.length > 30) hist.shift();
-      histIdx = hist.length - 1;
-    }
-    function undoAction() { if (histIdx > 0) { histIdx--; loadSnap(hist[histIdx]); } }
-    function redoAction() { if (histIdx < hist.length-1) { histIdx++; loadSnap(hist[histIdx]); } }
-    function loadSnap(url) {
-      const img = new Image();
-      img.onload = () => { ctx.clearRect(0,0,dc.width,dc.height); ctx.drawImage(img,0,0); };
-      img.src = url;
-    }
+  function deleteSelectedImg() {
+    if (!selectedWidget) return;
+    const id = selectedWidget.dataset.imgId;
+    selectedWidget.remove();
+    selectedWidget = null;
+    // Remove from Supabase
+    supa.from('strokes').delete().eq('room', ROOM).eq('data->>imgId', id);
     pushHistory();
+    toast('🗑 Картинка удалена');
+  }
 
-    // ── Topbar buttons ──
-    document.getElementById('btnUndo').addEventListener('click', undoAction);
-    document.getElementById('btnRedo').addEventListener('click', redoAction);
+  // Create an image widget on the canvas
+  // x,y,w,h are in canvas coordinates
+  function createImgWidget(src, x, y, w, h, id) {
+    id = id || 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+    const widget = document.createElement('div');
+    widget.className = 'img-widget';
+    widget.dataset.imgId = id;
+    widget.style.left   = x + 'px';
+    widget.style.top    = y + 'px';
+    widget.style.width  = w + 'px';
+    widget.style.height = h + 'px';
 
-    document.getElementById('btnClear').addEventListener('click', async () => {
-      if (!confirm('Очистить полотно для всех? Это удалит все штрихи навсегда.')) return;
-      await supa.from('strokes').delete().eq('room', ROOM);
-      allStrokes.length = 0;
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,dc.width,dc.height);
-      channel.send({ type:'broadcast', event:'clear', payload:{} });
-      pushHistory(); toast('🗑 Полотно очищено');
+    const img = document.createElement('img');
+    img.src = src;
+    img.draggable = false;
+
+    // Resize handles
+    const handles = ['nw','ne','sw','se'].map(dir => {
+      const h = document.createElement('div');
+      h.className = 'handle ' + dir;
+      h.dataset.dir = dir;
+      return h;
     });
 
-    document.getElementById('btnSave').addEventListener('click', () => {
+    // Delete button
+    const delBtn = document.createElement('div');
+    delBtn.className = 'del-btn';
+    delBtn.textContent = '×';
+    delBtn.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      widget.remove();
+      supa.from('strokes').delete().eq('room', ROOM).filter('data->>imgId', 'eq', id);
+      selectedWidget = null;
+      pushHistory();
+      toast('🗑 Картинка удалена');
+    });
+
+    widget.appendChild(img);
+    handles.forEach(h => widget.appendChild(h));
+    widget.appendChild(delBtn);
+    imgLayer.appendChild(widget);
+
+    // ── Drag to move ──
+    widget.addEventListener('pointerdown', e => {
+      if (e.target.classList.contains('handle') || e.target.classList.contains('del-btn')) return;
+      e.stopPropagation();
+      deselectImg();
+      selectedWidget = widget;
+      widget.classList.add('selected');
+      widget.setPointerCapture(e.pointerId);
+
+      const startCvX = (e.clientX - viewport.getBoundingClientRect().left - panX) / zoom;
+      const startCvY = (e.clientY - viewport.getBoundingClientRect().top  - panY) / zoom;
+      const origLeft = parseFloat(widget.style.left);
+      const origTop  = parseFloat(widget.style.top);
+
+      function onMove(ev) {
+        const r = viewport.getBoundingClientRect();
+        const cvX = (ev.clientX - r.left - panX) / zoom;
+        const cvY = (ev.clientY - r.top  - panY) / zoom;
+        widget.style.left = Math.max(0, Math.min(CANVAS_W - parseFloat(widget.style.width),  origLeft + cvX - startCvX)) + 'px';
+        widget.style.top  = Math.max(0, Math.min(CANVAS_H - parseFloat(widget.style.height), origTop  + cvY - startCvY)) + 'px';
+      }
+      function onUp() {
+        widget.removeEventListener('pointermove', onMove);
+        widget.removeEventListener('pointerup', onUp);
+        saveImgWidget(widget);
+      }
+      widget.addEventListener('pointermove', onMove);
+      widget.addEventListener('pointerup', onUp);
+    });
+
+    // ── Resize handles ──
+    handles.forEach(handle => {
+      handle.addEventListener('pointerdown', e => {
+        e.stopPropagation();
+        handle.setPointerCapture(e.pointerId);
+
+        const dir = handle.dataset.dir;
+        const r   = viewport.getBoundingClientRect();
+        const startX  = (e.clientX - r.left - panX) / zoom;
+        const startY  = (e.clientY - r.top  - panY) / zoom;
+        const origL   = parseFloat(widget.style.left);
+        const origT   = parseFloat(widget.style.top);
+        const origW   = parseFloat(widget.style.width);
+        const origH   = parseFloat(widget.style.height);
+
+        function onMove(ev) {
+          const rr  = viewport.getBoundingClientRect();
+          const cvX = (ev.clientX - rr.left - panX) / zoom;
+          const cvY = (ev.clientY - rr.top  - panY) / zoom;
+          const dx  = cvX - startX, dy = cvY - startY;
+
+          let newL = origL, newT = origT, newW = origW, newH = origH;
+          const MIN = 40;
+
+          if (dir.includes('e')) newW = Math.max(MIN, origW + dx);
+          if (dir.includes('s')) newH = Math.max(MIN, origH + dy);
+          if (dir.includes('w')) { newW = Math.max(MIN, origW - dx); newL = origL + origW - newW; }
+          if (dir.includes('n')) { newH = Math.max(MIN, origH - dy); newT = origT + origH - newH; }
+
+          widget.style.left   = newL + 'px';
+          widget.style.top    = newT + 'px';
+          widget.style.width  = newW + 'px';
+          widget.style.height = newH + 'px';
+        }
+        function onUp() {
+          handle.removeEventListener('pointermove', onMove);
+          handle.removeEventListener('pointerup', onUp);
+          saveImgWidget(widget);
+        }
+        handle.addEventListener('pointermove', onMove);
+        handle.addEventListener('pointerup', onUp);
+      });
+    });
+
+    return widget;
+  }
+
+  // Persist image widget state to Supabase
+  async function saveImgWidget(widget) {
+    const id  = widget.dataset.imgId;
+    const src = widget.querySelector('img').src;
+    const state = {
+      tool: 'image', imgId: id, src,
+      x: parseFloat(widget.style.left),
+      y: parseFloat(widget.style.top),
+      w: parseFloat(widget.style.width),
+      h: parseFloat(widget.style.height)
+    };
+    // Upsert: delete old + insert new (Supabase anon can't upsert easily without PK)
+    await supa.from('strokes').delete().eq('room', ROOM).filter('data->>imgId', 'eq', id);
+    await supa.from('strokes').insert({ room: ROOM, data: state });
+  }
+
+  // Handle file upload
+  document.getElementById('imgFile').addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f) return; e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        // Place in the center of visible viewport area, in canvas coords
+        const vr  = viewport.getBoundingClientRect();
+        const cvCX = (vr.width  / 2 - panX) / zoom;
+        const cvCY = (vr.height / 2 - panY) / zoom;
+        // Scale to reasonable initial size (max 400px wide, maintain aspect)
+        const maxW = Math.min(400, CANVAS_W * 0.4);
+        const scale = Math.min(1, maxW / img.naturalWidth);
+        const w = img.naturalWidth  * scale;
+        const h = img.naturalHeight * scale;
+        const x = Math.max(0, cvCX - w / 2);
+        const y = Math.max(0, cvCY - h / 2);
+
+        const id = 'img-' + Date.now();
+        const widget = createImgWidget(ev.target.result, x, y, w, h, id);
+        // select it so user can move/resize immediately
+        deselectImg();
+        selectedWidget = widget;
+        widget.classList.add('selected');
+
+        saveImgWidget(widget);
+        pushHistory();
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(f);
+    // Switch away from image tool after picking
+    setTool('pen');
+  });
+
+  // Click on viewport background → deselect
+  viewport.addEventListener('pointerdown', e => {
+    if (e.target === viewport || e.target === world || e.target === dc || e.target === rc || e.target === imgLayer) {
+      deselectImg();
+    }
+  });
+
+  // ══════════════════════════════════════════════
+  //  DRAWING (strokes on canvas)
+  // ══════════════════════════════════════════════
+  let drawing = false, startX = 0, startY = 0, lastX = 0, lastY = 0, preSnap = null;
+  let strokeBuf = [];
+  let channel; // declared later
+
+  function applyCtx(c, t, col, s, a) {
+    c.globalCompositeOperation = 'source-over';
+    c.globalAlpha   = t === 'marker' ? a * 0.5 : a;
+    c.strokeStyle   = t === 'eraser' ? '#ffffff' : col;
+    c.fillStyle     = col;
+    c.lineWidth     = t === 'brush' ? s * 2.5 : s;
+    c.lineCap = 'round'; c.lineJoin = 'round';
+  }
+
+  function drawShape(c, t, x0, y0, x1, y1, col, s, a) {
+    c.save();
+    c.globalCompositeOperation = 'source-over'; c.globalAlpha = a;
+    c.strokeStyle = col; c.lineWidth = s; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.beginPath();
+    if (t === 'line')   { c.moveTo(x0,y0); c.lineTo(x1,y1); c.stroke(); }
+    else if (t === 'rect')   { c.strokeRect(x0,y0,x1-x0,y1-y0); }
+    else if (t === 'circle') {
+      c.ellipse(x0+(x1-x0)/2, y0+(y1-y0)/2, Math.abs(x1-x0)/2, Math.abs(y1-y0)/2, 0, 0, Math.PI*2);
+      c.stroke();
+    }
+    c.restore();
+  }
+
+  function replayStroke(s, c) {
+    c = c || ctx;
+    if (s.tool === 'image') return; // images handled by imgLayer
+    if (s.tool === 'text' && s.text) {
+      c.save(); c.globalAlpha = s.op; c.fillStyle = s.color;
+      c.font = `500 ${Math.max(12, s.sz*2)}px Inter,sans-serif`;
+      c.fillText(s.text, s.x, s.y); c.restore(); return;
+    }
+    if (['pen','brush','marker','eraser'].includes(s.tool) && s.pts?.length >= 2) {
+      c.save();
+      c.globalCompositeOperation = 'source-over';
+      c.globalAlpha   = s.tool === 'marker' ? s.op * 0.5 : s.op;
+      c.strokeStyle   = s.tool === 'eraser' ? '#ffffff' : s.color;
+      c.lineWidth     = s.tool === 'brush' ? s.sz * 2.5 : s.sz;
+      c.lineCap = 'round'; c.lineJoin = 'round';
+      c.beginPath(); c.moveTo(s.pts[0].x, s.pts[0].y);
+      for (let i = 1; i < s.pts.length; i++) c.lineTo(s.pts[i].x, s.pts[i].y);
+      c.stroke(); c.restore(); return;
+    }
+    if (['line','rect','circle'].includes(s.tool)) {
+      drawShape(c, s.tool, s.x0, s.y0, s.x1, s.y1, s.color, s.sz, s.op);
+    }
+  }
+
+  const allStrokes = [];
+
+  function redrawAll() {
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+    allStrokes.forEach(s => replayStroke(s, ctx));
+  }
+
+  // ── Pointer events for drawing ──
+  viewport.addEventListener('pointerdown', onDown);
+  viewport.addEventListener('pointermove', onMove);
+  viewport.addEventListener('pointerup',   onUp);
+  viewport.addEventListener('pointerleave', onUp);
+
+  function onDown(e) {
+    // Don't draw if clicking on image widget or its children
+    if (e.target.closest('.img-widget')) return;
+
+    if (e.button === 1 || spaceDown) {
+      panning = true; pStart = {x: e.clientX - panX, y: e.clientY - panY};
+      viewport.style.cursor = 'grabbing'; return;
+    }
+    if (e.button !== 0) return;
+    e.preventDefault();
+    viewport.setPointerCapture(e.pointerId);
+    const [x, y] = getXY(e);
+    if (tool === 'text') { addText(x, y); return; }
+    if (tool === 'image') return;
+    drawing = true; startX = lastX = x; startY = lastY = y; strokeBuf = [{x, y}];
+    if (['pen','brush','marker','eraser'].includes(tool)) {
+      applyCtx(ctx, tool, color, sz, op);
+      ctx.beginPath(); ctx.moveTo(x, y);
+    } else {
+      preSnap = ctx.getImageData(0,0,CANVAS_W,CANVAS_H);
+    }
+  }
+
+  function onMove(e) {
+    if (panning) { panX = e.clientX - pStart.x; panY = e.clientY - pStart.y; applyTransform(); return; }
+    const [mx, my] = getXY(e);
+    if (channel) channel.send({ type:'broadcast', event:'cursor', payload:{x:mx, y:my, id:myId, color:myColor, name:myName} });
+    if (!drawing) return;
+    e.preventDefault();
+    if (['pen','brush','marker','eraser'].includes(tool)) {
+      applyCtx(ctx, tool, color, sz, op);
+      ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(mx, my); ctx.stroke();
+      strokeBuf.push({x:mx, y:my}); lastX = mx; lastY = my;
+      if (strokeBuf.length % 4 === 0 && channel) {
+        channel.send({ type:'broadcast', event:'live', payload:{id:myId, tool, color, sz, op, pts: strokeBuf.slice(-8)} });
+      }
+    } else {
+      ctx.putImageData(preSnap, 0, 0);
+      drawShape(ctx, tool, startX, startY, mx, my, color, sz, op);
+    }
+  }
+
+  function onUp(e) {
+    if (panning) { panning = false; viewport.style.cursor = ''; return; }
+    if (!drawing) return; drawing = false;
+    const [x, y] = getXY(e);
+    if (['line','rect','circle'].includes(tool) && preSnap) {
+      ctx.putImageData(preSnap, 0, 0);
+      drawShape(ctx, tool, startX, startY, x, y, color, sz, op);
+    }
+    const stroke = { tool, color, sz, op, pts: strokeBuf, x0:startX, y0:startY, x1:x, y1:y };
+    saveStroke(stroke);
+    strokeBuf = []; preSnap = null;
+    pushHistory();
+  }
+
+  // ── Text tool ──
+  function addText(x, y) {
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.placeholder = 'Текст...';
+    // position in world coords, but display in viewport-space
+    const r = viewport.getBoundingClientRect();
+    const vpX = x * zoom + panX + r.left;
+    const vpY = y * zoom + panY + r.top;
+    inp.style.cssText = `position:fixed;left:${vpX}px;top:${vpY}px;
+      background:transparent;border:none;border-bottom:1.5px solid #1a1a1a;
+      color:${color};font-family:'Inter',sans-serif;font-size:${Math.max(12, sz*2)}px;
+      font-weight:500;outline:none;z-index:500;min-width:120px;`;
+    document.body.appendChild(inp); inp.focus();
+    const commit = () => {
+      const v = inp.value.trim();
+      if (v) {
+        ctx.save(); ctx.globalAlpha = op; ctx.fillStyle = color;
+        ctx.font = `500 ${Math.max(12, sz*2)}px Inter,sans-serif`;
+        ctx.fillText(v, x, y); ctx.restore();
+        saveStroke({tool:'text', color, sz, op, text:v, x, y});
+        pushHistory();
+      }
+      inp.remove();
+    };
+    inp.addEventListener('blur', commit);
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') inp.blur();
+      if (e.key === 'Escape') { inp.value = ''; inp.blur(); }
+    });
+  }
+
+  // ── Undo / Redo ──
+  let hist = [], histIdx = -1;
+  function pushHistory() {
+    hist = hist.slice(0, histIdx + 1);
+    hist.push(dc.toDataURL());
+    if (hist.length > 30) hist.shift();
+    histIdx = hist.length - 1;
+  }
+  function undoAction() { if (histIdx > 0) { histIdx--; loadSnap(hist[histIdx]); } }
+  function redoAction() { if (histIdx < hist.length-1) { histIdx++; loadSnap(hist[histIdx]); } }
+  function loadSnap(url) {
+    const img = new Image();
+    img.onload = () => { ctx.clearRect(0,0,CANVAS_W,CANVAS_H); ctx.drawImage(img,0,0); };
+    img.src = url;
+  }
+  pushHistory();
+
+  document.getElementById('btnUndo').addEventListener('click', undoAction);
+  document.getElementById('btnRedo').addEventListener('click', redoAction);
+
+  document.getElementById('btnClear').addEventListener('click', async () => {
+    if (!confirm('Очистить полотно для всех? Это удалит все штрихи навсегда.')) return;
+    await supa.from('strokes').delete().eq('room', ROOM);
+    allStrokes.length = 0;
+    // Remove all image widgets
+    imgLayer.innerHTML = '';
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+    if (channel) channel.send({ type:'broadcast', event:'clear', payload:{} });
+    pushHistory(); toast('🗑 Полотно очищено');
+  });
+
+  document.getElementById('btnSave').addEventListener('click', () => {
+    // Composite: draw images onto canvas for export
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = CANVAS_W; exportCanvas.height = CANVAS_H;
+    const ectx = exportCanvas.getContext('2d');
+    ectx.drawImage(dc, 0, 0);
+    // Draw image widgets onto export canvas
+    const widgets = imgLayer.querySelectorAll('.img-widget');
+    const promises = Array.from(widgets).map(w => new Promise(res => {
+      const img = w.querySelector('img');
+      const x = parseFloat(w.style.left), y = parseFloat(w.style.top);
+      const width = parseFloat(w.style.width), height = parseFloat(w.style.height);
+      if (img.complete) { ectx.drawImage(img, x, y, width, height); res(); }
+      else { img.onload = () => { ectx.drawImage(img, x, y, width, height); res(); }; }
+    }));
+    Promise.all(promises).then(() => {
       const a = document.createElement('a');
-      a.download = `canvas-${ROOM}.png`; a.href = dc.toDataURL(); a.click();
+      a.download = `canvas-${ROOM}.png`; a.href = exportCanvas.toDataURL(); a.click();
       toast('💾 Сохранено!');
     });
+  });
 
-    document.getElementById('btnShare').addEventListener('click', () => {
-      const url = location.href;
-      if (navigator.share) navigator.share({title:'canvas · '+ROOM, url});
-      else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast('🔗 Ссылка скопирована!'));
-      else prompt('Ссылка:', url);
-    });
+  document.getElementById('btnShare').addEventListener('click', () => {
+    const url = location.href;
+    if (navigator.share) navigator.share({title:'canvas · '+ROOM, url});
+    else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast('🔗 Ссылка скопирована!'));
+    else prompt('Ссылка:', url);
+  });
 
-    document.getElementById('imgFile').addEventListener('change', e => {
-      const f = e.target.files[0]; if (!f) return; e.target.value = '';
-      const reader = new FileReader();
-      reader.onload = ev => {
-        const img = new Image();
-        img.onload = () => {
-          const mw = Math.min(300, dc.width * .4), w = mw, h = img.height * (mw / img.width);
-          const x = (dc.width/2 - w/2 - panX)/zoom, y = (dc.height/2 - h/2 - panY)/zoom;
-          ctx.drawImage(img, x, y, w/zoom, h/zoom); pushHistory();
-        };
-        img.src = ev.target.result;
-      };
-      reader.readAsDataURL(f);
-    });
+  // ── Supabase: save & load ──
+  async function saveStroke(stroke) {
+    const { error } = await supa.from('strokes').insert({ room: ROOM, data: stroke });
+    if (error) console.error('save error:', error.message);
+  }
 
-    // ── Supabase: save & load ──
-    async function saveStroke(stroke) {
-      const { error } = await supa.from('strokes').insert({ room: ROOM, data: stroke });
-      if (error) console.error('save error:', error.message);
-    }
+  function setLoading(on) {
+    const bar = document.getElementById('loadingBar');
+    bar.style.width = on ? '70%' : '100%';
+    if (!on) setTimeout(() => bar.style.width = '0%', 400);
+  }
 
-    function setLoading(on) {
-      const bar = document.getElementById('loadingBar');
-      bar.style.width = on ? '70%' : '100%';
-      if (!on) setTimeout(() => bar.style.width = '0%', 400);
-    }
+  async function loadStrokes() {
+    setLoading(true);
+    const { data, error } = await supa.from('strokes')
+      .select('data')
+      .eq('room', ROOM)
+      .order('created_at', { ascending: true });
+    setLoading(false);
+    if (error) { console.error('load error:', error.message); toast('⚠️ Ошибка загрузки'); return; }
+    if (!data || data.length === 0) return;
 
-    async function loadStrokes() {
-      setLoading(true);
-      const { data, error } = await supa.from('strokes')
-        .select('data')
-        .eq('room', ROOM)
-        .order('created_at', { ascending: true });
-      setLoading(false);
-      if (error) { console.error('load error:', error.message); toast('⚠️ Ошибка загрузки'); return; }
-      if (!data || data.length === 0) return;
-      data.forEach(row => {
-        if (!row.data) return;
+    // Separate images from strokes to handle deduplication by imgId
+    const imgMap = new Map(); // imgId → latest state
+
+    data.forEach(row => {
+      if (!row.data) return;
+      if (row.data.tool === 'image' && row.data.imgId) {
+        imgMap.set(row.data.imgId, row.data);
+      } else {
         allStrokes.push(row.data);
         replayStroke(row.data, ctx);
-      });
-      pushHistory();
-      toast(`✅ Загружено ${data.length} штрихов`);
-    }
-
-    // ── Supabase Realtime ──
-    const cursorEls = {};
-    const liveStrokes = {};
-
-    const channel = supa.channel('room:' + ROOM, {
-      config: { broadcast: { self: false } }
-    });
-
-    channel.on('broadcast', { event: 'cursor' }, ({ payload: p }) => {
-      const r = cvEl.getBoundingClientRect();
-      const sx = p.x * zoom + panX + r.left, sy = p.y * zoom + panY + r.top;
-      if (!cursorEls[p.id]) {
-        const el = document.createElement('div');
-        el.className = 'r-label';
-        el.style.background = p.color || '#333';
-        el.textContent = p.name || '?';
-        document.body.appendChild(el); cursorEls[p.id] = el;
-      }
-      cursorEls[p.id].style.left = sx + 'px';
-      cursorEls[p.id].style.top  = (sy + 14) + 'px';
-    });
-
-    channel.on('broadcast', { event: 'live' }, ({ payload: p }) => {
-      liveStrokes[p.id] = p;
-      drawLivePreviews();
-    });
-
-    channel.on('broadcast', { event: 'clear' }, () => {
-      allStrokes.length = 0;
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,dc.width,dc.height);
-      pushHistory();
-    });
-
-    channel.on('postgres_changes', {
-      event: 'INSERT', schema: 'public', table: 'strokes',
-      filter: `room=eq.${ROOM}`
-    }, ({ new: row }) => {
-      if (!row?.data) return;
-      allStrokes.push(row.data);
-      replayStroke(row.data, ctx);
-      delete liveStrokes[row.data._peer];
-      drawLivePreviews();
-      pushHistory();
-    });
-
-    channel.on('presence', { event: 'sync' }, () => {
-      const state = channel.presenceState();
-      const n = Object.keys(state).length - 1;
-      document.getElementById('dot').className = 'dot' + (n <= 0 ? ' alone' : '');
-      document.getElementById('peerCount').textContent =
-        n <= 0 ? 'только ты' : n === 1 ? '1 человек рядом' : n + ' человека рядом';
-    });
-
-    channel.subscribe(async status => {
-      if (status === 'SUBSCRIBED') {
-        await channel.track({ id: myId, name: myName, color: myColor });
       }
     });
 
-    function drawLivePreviews() {
-      rctx.clearRect(0,0,rc.width,rc.height);
-      Object.values(liveStrokes).forEach(s => {
-        if (!s.pts || s.pts.length < 2) return;
-        rctx.save();
-        rctx.globalCompositeOperation = 'source-over';
-        rctx.globalAlpha = s.tool === 'marker' ? s.op * 0.5 : s.op;
-        rctx.strokeStyle = s.tool === 'eraser' ? '#ffffff' : s.color;
-        rctx.lineWidth   = s.tool === 'brush' ? s.sz * 2.5 : s.sz;
-        rctx.lineCap = 'round'; rctx.lineJoin = 'round';
-        rctx.beginPath(); rctx.moveTo(s.pts[0].x, s.pts[0].y);
-        for (let i = 1; i < s.pts.length; i++) rctx.lineTo(s.pts[i].x, s.pts[i].y);
-        rctx.stroke(); rctx.restore();
-      });
-    }
+    // Render latest state of each image widget
+    imgMap.forEach(state => {
+      createImgWidget(state.src, state.x, state.y, state.w, state.h, state.imgId);
+    });
 
-    // Start!
-    loadStrokes();
+    pushHistory();
+    const total = allStrokes.length + imgMap.size;
+    if (total > 0) toast(`✅ Загружено ${total} объектов`);
   }
+
+  // ── Supabase Realtime ──
+  const cursorEls   = {};
+  const liveStrokes = {};
+
+  channel = supa.channel('room:' + ROOM, {
+    config: { broadcast: { self: false } }
+  });
+
+  channel.on('broadcast', { event: 'cursor' }, ({ payload: p }) => {
+    const r  = viewport.getBoundingClientRect();
+    const sx = p.x * zoom + panX + r.left;
+    const sy = p.y * zoom + panY + r.top;
+    if (!cursorEls[p.id]) {
+      const el = document.createElement('div');
+      el.className = 'r-label';
+      el.style.background = p.color || '#333';
+      el.textContent = p.name || '?';
+      document.body.appendChild(el); cursorEls[p.id] = el;
+    }
+    cursorEls[p.id].style.left = sx + 'px';
+    cursorEls[p.id].style.top  = (sy + 14) + 'px';
+  });
+
+  channel.on('broadcast', { event: 'live' }, ({ payload: p }) => {
+    liveStrokes[p.id] = p; drawLivePreviews();
+  });
+
+  channel.on('broadcast', { event: 'clear' }, () => {
+    allStrokes.length = 0;
+    imgLayer.innerHTML = '';
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+    pushHistory();
+  });
+
+  channel.on('postgres_changes', {
+    event: 'INSERT', schema: 'public', table: 'strokes',
+    filter: `room=eq.${ROOM}`
+  }, ({ new: row }) => {
+    if (!row?.data) return;
+    const s = row.data;
+    if (s.tool === 'image' && s.imgId) {
+      // Remove old widget for this imgId, add new
+      const old = imgLayer.querySelector(`[data-img-id="${s.imgId}"]`);
+      if (old) old.remove();
+      createImgWidget(s.src, s.x, s.y, s.w, s.h, s.imgId);
+    } else {
+      allStrokes.push(s);
+      replayStroke(s, ctx);
+      delete liveStrokes[s._peer];
+      drawLivePreviews();
+    }
+    pushHistory();
+  });
+
+  channel.on('presence', { event: 'sync' }, () => {
+    const state = channel.presenceState();
+    const n = Object.keys(state).length - 1;
+    document.getElementById('dot').className = 'dot' + (n <= 0 ? ' alone' : '');
+    document.getElementById('peerCount').textContent =
+      n <= 0 ? 'только ты' : n === 1 ? '1 человек рядом' : n + ' человека рядом';
+  });
+
+  channel.subscribe(async status => {
+    if (status === 'SUBSCRIBED') {
+      await channel.track({ id: myId, name: myName, color: myColor });
+    }
+  });
+
+  function drawLivePreviews() {
+    rctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    Object.values(liveStrokes).forEach(s => {
+      if (!s.pts || s.pts.length < 2) return;
+      rctx.save();
+      rctx.globalCompositeOperation = 'source-over';
+      rctx.globalAlpha   = s.tool === 'marker' ? s.op * 0.5 : s.op;
+      rctx.strokeStyle   = s.tool === 'eraser' ? '#ffffff' : s.color;
+      rctx.lineWidth     = s.tool === 'brush' ? s.sz * 2.5 : s.sz;
+      rctx.lineCap = 'round'; rctx.lineJoin = 'round';
+      rctx.beginPath(); rctx.moveTo(s.pts[0].x, s.pts[0].y);
+      for (let i = 1; i < s.pts.length; i++) rctx.lineTo(s.pts[i].x, s.pts[i].y);
+      rctx.stroke(); rctx.restore();
+    });
+  }
+
+  loadStrokes();
+}
 
 })();
 </script>
