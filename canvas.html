@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>canvas</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
+
+<!-- Yjs + WebRTC provider for realtime P2P sync -->
+<script src="https://cdn.jsdelivr.net/npm/yjs@13.6.18/dist/yjs.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/y-webrtc@10.3.0/dist/y-webrtc.js"></script>
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:#F7F5F0;font-family:'Inter',sans-serif;}
+
+/* ── TOPBAR ── */
+#topbar{
+  position:fixed;top:0;left:0;right:0;height:44px;
+  display:flex;align-items:center;padding:0 16px;gap:10px;
+  z-index:200;
+  /* glass */
+  background:rgba(247,245,240,.85);
+  backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(0,0,0,.07);
+}
+#topbar .logo{font-size:13px;font-weight:600;letter-spacing:0.1em;color:#555;cursor:pointer;}
+#topbar .logo:hover{color:#1a1a1a;}
+.room-pill{
+  background:#1a1a1a;color:#fff;
+  font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+  padding:3px 9px;border-radius:20px;
+}
+.spacer{flex:1;}
+.peers-dot{
+  display:flex;align-items:center;gap:5px;
+  font-size:12px;color:#888;
+}
+.dot{width:7px;height:7px;border-radius:50%;background:#4ADE80;flex-shrink:0;
+     box-shadow:0 0 0 2px rgba(74,222,128,.2);}
+.dot.alone{background:#D1CECC;box-shadow:none;}
+
+.hdr-btn{
+  background:transparent;border:1px solid rgba(0,0,0,.12);
+  border-radius:8px;padding:5px 11px;
+  font-family:'Inter',sans-serif;font-size:12px;font-weight:500;color:#444;
+  cursor:pointer;transition:all .15s;white-space:nowrap;
+}
+.hdr-btn:hover{background:#fff;border-color:rgba(0,0,0,.22);color:#1a1a1a;}
+.hdr-btn.accent{background:#1a1a1a;color:#fff;border-color:#1a1a1a;}
+.hdr-btn.accent:hover{opacity:.85;}
+
+/* ── CANVAS ── */
+#cv{
+  position:fixed;top:44px;left:0;right:0;bottom:0;
+  cursor:crosshair;touch-action:none;
+}
+#cv canvas{position:absolute;top:0;left:0;}
+#drawCanvas{z-index:1;}
+#cursorCanvas{z-index:2;pointer-events:none;}
+
+/* ── FLOATING TOOL BUTTON ── */
+#toolBtn{
+  position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
+  width:52px;height:52px;border-radius:50%;
+  background:#1a1a1a;border:none;
+  color:#fff;font-size:20px;
+  cursor:pointer;z-index:300;
+  box-shadow:0 4px 20px rgba(0,0,0,.25);
+  transition:transform .2s,box-shadow .2s;
+  display:flex;align-items:center;justify-content:center;
+}
+#toolBtn:hover{transform:translateX(-50%) scale(1.08);box-shadow:0 6px 28px rgba(0,0,0,.32);}
+#toolBtn.open{transform:translateX(-50%) rotate(45deg);}
+
+/* ── TOOL PANEL ── */
+#toolPanel{
+  position:fixed;bottom:92px;left:50%;transform:translateX(-50%) translateY(12px);
+  background:#fff;
+  border:1px solid rgba(0,0,0,.09);
+  border-radius:20px;
+  padding:16px;
+  z-index:299;
+  box-shadow:0 8px 40px rgba(0,0,0,.14);
+  opacity:0;pointer-events:none;
+  transition:opacity .2s,transform .2s;
+  width:300px;
+}
+#toolPanel.open{opacity:1;pointer-events:all;transform:translateX(-50%) translateY(0);}
+
+/* Tool panel sections */
+.tp-section{margin-bottom:14px;}
+.tp-section:last-child{margin-bottom:0;}
+.tp-label{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#B0ADA8;margin-bottom:8px;}
+
+/* Tool icons row */
+.tool-row{display:flex;gap:6px;flex-wrap:wrap;}
+.t{
+  width:38px;height:38px;border-radius:10px;border:1.5px solid transparent;
+  background:#F5F3EF;color:#555;font-size:16px;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:all .13s;flex-shrink:0;
+}
+.t:hover{background:#EDEAE5;color:#1a1a1a;}
+.t.on{background:#1a1a1a;color:#fff;border-color:#1a1a1a;}
+
+/* Colors */
+.color-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+.c{
+  width:26px;height:26px;border-radius:50%;cursor:pointer;
+  border:2px solid transparent;transition:transform .13s;flex-shrink:0;
+}
+.c:hover{transform:scale(1.15);}
+.c.on{border-color:#1a1a1a;transform:scale(1.12);}
+.c-pick{position:relative;overflow:hidden;}
+.c-pick input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+
+/* Sliders */
+.slider-row{display:flex;align-items:center;gap:10px;}
+.slider-row input[type=range]{
+  flex:1;-webkit-appearance:none;height:3px;border-radius:2px;
+  background:#E8E5E0;outline:none;
+}
+.slider-row input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;
+  border-radius:50%;background:#1a1a1a;cursor:pointer;
+}
+.slider-val{font-size:11px;color:#AAA;min-width:26px;text-align:right;}
+
+/* Sep */
+.tp-sep{height:1px;background:#F0EDE8;margin:12px 0;}
+
+/* ── MODAL: GitHub Token ── */
+.modal-bg{
+  position:fixed;inset:0;background:rgba(0,0,0,.35);
+  backdrop-filter:blur(4px);
+  z-index:500;display:flex;align-items:center;justify-content:center;
+  opacity:0;pointer-events:none;transition:opacity .2s;
+}
+.modal-bg.open{opacity:1;pointer-events:all;}
+.modal{
+  background:#fff;border-radius:20px;padding:28px;width:100%;max-width:380px;
+  box-shadow:0 24px 80px rgba(0,0,0,.18);
+  transform:translateY(10px);transition:transform .2s;
+  margin:16px;
+}
+.modal-bg.open .modal{transform:translateY(0);}
+.modal h2{font-size:18px;font-weight:600;margin-bottom:6px;color:#1a1a1a;}
+.modal p{font-size:13px;color:#888;line-height:1.6;margin-bottom:18px;}
+.modal a{color:#1a1a1a;font-weight:500;}
+.modal input{
+  width:100%;background:#F5F3EF;border:1.5px solid #E0DDD8;
+  border-radius:10px;padding:12px 14px;
+  font-family:'Inter',monospace;font-size:13px;color:#1a1a1a;
+  outline:none;margin-bottom:10px;
+}
+.modal input:focus{border-color:#1a1a1a;}
+.modal-btns{display:flex;gap:8px;}
+.mbtn{
+  flex:1;border:none;border-radius:10px;padding:11px;
+  font-family:'Inter',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:opacity .15s;
+}
+.mbtn.pri{background:#1a1a1a;color:#fff;}
+.mbtn.pri:hover{opacity:.85;}
+.mbtn.sec{background:#F5F3EF;color:#555;}
+.mbtn.sec:hover{background:#EDEAE5;}
+
+/* ── TOAST ── */
+#toast{
+  position:fixed;bottom:96px;left:50%;transform:translateX(-50%) translateY(6px);
+  background:#1a1a1a;color:#fff;
+  font-size:13px;font-weight:500;
+  padding:9px 18px;border-radius:24px;
+  opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;
+  z-index:400;white-space:nowrap;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ── REMOTE CURSORS ── */
+.r-cursor{
+  position:fixed;pointer-events:none;z-index:150;
+  transition:left .08s,top .08s;
+}
+.r-cursor svg{display:block;}
+.r-cursor span{
+  position:absolute;top:18px;left:6px;
+  background:#1a1a1a;color:#fff;
+  font-size:10px;font-weight:600;padding:2px 6px;border-radius:8px;
+  white-space:nowrap;
+}
+
+/* Zoom pill */
+#zoomPill{
+  position:fixed;bottom:28px;right:18px;
+  background:rgba(255,255,255,.8);border:1px solid rgba(0,0,0,.1);
+  border-radius:8px;padding:4px 9px;font-size:11px;color:#888;
+  backdrop-filter:blur(6px);z-index:200;pointer-events:none;
+}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <span class="logo" onclick="location.href='index.html'">canvas</span>
+  <span class="room-pill" id="roomPill">----</span>
+  <div class="peers-dot">
+    <div class="dot alone" id="dot"></div>
+    <span id="peerCount">только ты</span>
+  </div>
+  <div class="spacer"></div>
+  <button class="hdr-btn" onclick="undoAction()">↩</button>
+  <button class="hdr-btn" onclick="redoAction()">↪</button>
+  <button class="hdr-btn" onclick="saveImg()">💾</button>
+  <button class="hdr-btn" onclick="share()">🔗 Поделиться</button>
+  <button class="hdr-btn accent" id="ghBtn" onclick="openGhModal()">GitHub ↑</button>
+</div>
+
+<!-- CANVAS AREA -->
+<div id="cv">
+  <canvas id="drawCanvas"></canvas>
+  <canvas id="cursorCanvas"></canvas>
+</div>
+
+<!-- FLOATING TOOL BUTTON -->
+<button id="toolBtn" onclick="togglePanel()">✏</button>
+
+<!-- TOOL PANEL -->
+<div id="toolPanel">
+
+  <!-- Tools -->
+  <div class="tp-section">
+    <div class="tp-label">Инструмент</div>
+    <div class="tool-row" id="toolRow">
+      <button class="t on" data-tool="pen"     title="Карандаш">✏️</button>
+      <button class="t"    data-tool="brush"   title="Кисть">🖌</button>
+      <button class="t"    data-tool="marker"  title="Маркер">🖊</button>
+      <button class="t"    data-tool="eraser"  title="Ластик">⬜</button>
+      <button class="t"    data-tool="line"    title="Линия">╱</button>
+      <button class="t"    data-tool="rect"    title="Прямоугольник">▭</button>
+      <button class="t"    data-tool="circle"  title="Эллипс">◯</button>
+      <button class="t"    data-tool="text"    title="Текст" style="font-family:'Inter',sans-serif;font-weight:600;font-size:14px;">T</button>
+      <button class="t"    data-tool="image"   title="Картинка" onclick="uploadImg()">🖼</button>
+    </div>
+  </div>
+
+  <div class="tp-sep"></div>
+
+  <!-- Colors -->
+  <div class="tp-section">
+    <div class="tp-label">Цвет</div>
+    <div class="color-row" id="colorRow"></div>
+  </div>
+
+  <div class="tp-sep"></div>
+
+  <!-- Size -->
+  <div class="tp-section">
+    <div class="tp-label">Размер</div>
+    <div class="slider-row">
+      <input type="range" id="sizeR" min="1" max="80" value="5" oninput="sz=+this.value;document.getElementById('szV').textContent=this.value"/>
+      <span class="slider-val" id="szV">5</span>
+    </div>
+  </div>
+
+  <!-- Opacity -->
+  <div class="tp-section">
+    <div class="tp-label">Прозрачность</div>
+    <div class="slider-row">
+      <input type="range" id="opR" min="5" max="100" value="100" oninput="op=this.value/100;document.getElementById('opV').textContent=this.value+'%'"/>
+      <span class="slider-val" id="opV">100%</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- ZOOM -->
+<div id="zoomPill" id="zp">100%</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<!-- GITHUB MODAL -->
+<div class="modal-bg" id="ghModal">
+  <div class="modal">
+    <h2>Сохранить в GitHub</h2>
+    <p>
+      Создай токен на <a href="https://github.com/settings/tokens/new?scopes=gist" target="_blank">github.com/settings/tokens</a> с правом <strong>gist</strong>.<br/>
+      Токен хранится только в твоём браузере.
+    </p>
+    <input type="password" id="ghTokenInput" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"/>
+    <div style="font-size:12px;color:#AAA;margin-bottom:14px;" id="ghGistInfo"></div>
+    <div class="modal-btns">
+      <button class="mbtn sec" onclick="closeGhModal()">Отмена</button>
+      <button class="mbtn pri" onclick="doGhSave()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="imgFile" accept="image/*" style="display:none" onchange="onImgFile(event)"/>
+
+<script>
+// ═══════════════════════════════════════════════
+//  ROOM & YJS SETUP
+// ═══════════════════════════════════════════════
+const ROOM = (new URLSearchParams(location.search).get('r')||'main').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,4);
+document.getElementById('roomPill').textContent = ROOM;
+document.title = 'canvas · ' + ROOM;
+
+const ydoc = new Y.Doc();
+// yStrokes: shared array of stroke objects [{tool,color,size,op,pts:[{x,y}]}]
+const yStrokes = ydoc.getArray('strokes');
+// yCursors: shared map clientId -> {x,y,name}
+const yCursors = ydoc.getMap('cursors');
+// yImages: shared array of image objects
+const yImages = ydoc.getArray('images');
+// yMeta: misc flags
+const yMeta = ydoc.getMap('meta');
+
+// WebRTC provider — uses public signaling servers (no infra needed)
+const provider = new WebrtcProvider('together-canvas-v1-' + ROOM, ydoc, {
+  signaling: [
+    'wss://signaling.yjs.dev',
+    'wss://y-webrtc-signaling-eu.herokuapp.com',
+    'wss://y-webrtc-signaling-us.herokuapp.com'
+  ]
+});
+
+const awareness = provider.awareness;
+const myId = ydoc.clientID;
+const myName = 'peer-' + Math.floor(Math.random()*900+100);
+
+awareness.setLocalState({ name: myName, cursor: null, color: '#' + Math.floor(Math.random()*0x444444+0x888888).toString(16) });
+
+// Peers UI
+awareness.on('change', updatePeers);
+function updatePeers(){
+  const states = Array.from(awareness.getStates().values());
+  const n = states.length - 1; // exclude self
+  const dot = document.getElementById('dot');
+  const pc = document.getElementById('peerCount');
+  if(n<=0){ dot.className='dot alone'; pc.textContent='только ты'; }
+  else { dot.className='dot'; pc.textContent = n===1?'1 человек рядом':n+' человека рядом'; }
+  // draw remote cursors
+  drawRemoteCursors();
+}
+
+// ═══════════════════════════════════════════════
+//  CANVAS SETUP
+// ═══════════════════════════════════════════════
+const cv = document.getElementById('cv');
+const dc = document.getElementById('drawCanvas');
+const cc = document.getElementById('cursorCanvas');
+const ctx = dc.getContext('2d');
+const cctx = cc.getContext('2d');
+
+function resize(){
+  const W=cv.clientWidth, H=cv.clientHeight;
+  // Save current drawing
+  const tmp = ctx.getImageData(0,0,dc.width,dc.height);
+  dc.width=W; dc.height=H; cc.width=W; cc.height=H;
+  ctx.putImageData(tmp,0,0);
+  // Fill white if blank
+}
+resize();
+window.addEventListener('resize',resize);
+// Initial white bg
+ctx.fillStyle='#fff';
+ctx.fillRect(0,0,dc.width,dc.height);
+
+// ═══════════════════════════════════════════════
+//  TOOL STATE
+// ═══════════════════════════════════════════════
+let tool='pen', color='#1a1a1a', sz=5, op=1;
+const PALETTE = ['#1a1a1a','#fff','#EF4444','#F97316','#FBBF24','#22C55E','#3B82F6','#8B5CF6','#EC4899','#6B7280'];
+
+// Build color swatches
+const cr = document.getElementById('colorRow');
+PALETTE.forEach(col=>{
+  const s=document.createElement('div');
+  s.className='c'+(col===color?' on':'');
+  s.style.background=col;
+  if(col==='#fff')s.style.border='2px solid #E0DDD8';
+  s.onclick=()=>setColor(col,s);
+  cr.appendChild(s);
+});
+// Custom picker
+const cp=document.createElement('div');
+cp.className='c c-pick';
+cp.style.background='conic-gradient(red,yellow,lime,cyan,blue,magenta,red)';
+cp.title='Свой цвет';
+const ci=document.createElement('input');ci.type='color';ci.value='#ff0000';
+ci.oninput=e=>setColor(e.target.value,cp);
+cp.appendChild(ci);cr.appendChild(cp);
+
+function setColor(c,el){
+  color=c;
+  document.querySelectorAll('.c').forEach(x=>x.classList.remove('on'));
+  el.classList.add('on');
+}
+
+// Tool buttons
+document.getElementById('toolRow').addEventListener('click',e=>{
+  const btn=e.target.closest('[data-tool]');
+  if(!btn)return;
+  const t=btn.dataset.tool;
+  if(t==='image')return;
+  setTool(t);
+});
+function setTool(t){
+  tool=t;
+  document.querySelectorAll('.t[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
+  const em = t==='eraser'?'cell':t==='text'?'text':'crosshair';
+  dc.style.cursor=em; cc.style.cursor=em;
+  document.getElementById('toolBtn').textContent =
+    t==='pen'?'✏':t==='brush'?'🖌':t==='marker'?'🖊':t==='eraser'?'⬜':
+    t==='line'?'╱':t==='rect'?'▭':t==='circle'?'◯':t==='text'?'T':'✏';
+}
+
+// ═══════════════════════════════════════════════
+//  PANEL TOGGLE
+// ═══════════════════════════════════════════════
+let panelOpen=false;
+function togglePanel(){
+  panelOpen=!panelOpen;
+  document.getElementById('toolPanel').classList.toggle('open',panelOpen);
+  document.getElementById('toolBtn').classList.toggle('open',panelOpen);
+}
+// Close panel on canvas click
+cv.addEventListener('pointerdown',()=>{ if(panelOpen)togglePanel(); });
+
+// ═══════════════════════════════════════════════
+//  DRAWING
+// ═══════════════════════════════════════════════
+let drawing=false, startX=0,startY=0, lastX=0,lastY=0;
+let currentStroke=null; // {tool,color,size,op,pts}
+let preSnap=null; // snapshot before shape for preview
+
+// pan/zoom
+let panX=0,panY=0,zoom=1,panning=false,pStart={x:0,y:0},spaceDown=false;
+
+function scr2cv(x,y){
+  const r=cv.getBoundingClientRect();
+  return [(x-r.left-panX)/zoom,(y-r.top-panY)/zoom];
+}
+function getXY(e){
+  if(e.touches)return scr2cv(e.touches[0].clientX,e.touches[0].clientY);
+  return scr2cv(e.clientX,e.clientY);
+}
+function applyTransform(){
+  dc.style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
+  dc.style.transformOrigin='0 0';
+  cc.style.transform=dc.style.transform;
+  cc.style.transformOrigin='0 0';
+  document.getElementById('zoomPill').textContent=Math.round(zoom*100)+'%';
+}
+
+cv.addEventListener('pointerdown',onDown);
+cv.addEventListener('pointermove',onMove);
+cv.addEventListener('pointerup',onUp);
+cv.addEventListener('pointerleave',onUp);
+
+function onDown(e){
+  if(e.button===1||spaceDown){panning=true;pStart={x:e.clientX-panX,y:e.clientY-panY};cv.style.cursor='grabbing';return;}
+  if(e.button!==0)return;
+  e.preventDefault();
+  cv.setPointerCapture(e.pointerId);
+  if(tool==='text'){addText(...getXY(e));return;}
+  drawing=true;
+  const [x,y]=getXY(e);
+  startX=lastX=x; startY=lastY=y;
+
+  if(['pen','brush','marker','eraser'].includes(tool)){
+    ctx.save();
+    applyCtx();
+    ctx.beginPath();
+    ctx.moveTo(x,y);
+    ctx.restore();
+    currentStroke={tool,color:tool==='eraser'?'#fff':color,size:sz,op:tool==='marker'?op*.55:op,pts:[{x,y}]};
+  } else {
+    preSnap=ctx.getImageData(0,0,dc.width,dc.height);
+    currentStroke={tool,color,size:sz,op,pts:[{x:startX,y:startY}]};
+  }
+  // Share stroke start via yjs (send periodically)
+}
+
+function onMove(e){
+  if(panning){panX=e.clientX-pStart.x;panY=e.clientY-pStart.y;applyTransform();return;}
+  const [mx,my]=getXY(e);
+  // Broadcast cursor
+  const state=awareness.getLocalState();
+  awareness.setLocalState({...state,cursor:{x:mx,y:my}});
+
+  if(!drawing)return;
+  e.preventDefault();
+  const x=mx,y=my;
+
+  if(['pen','brush','marker','eraser'].includes(tool)){
+    ctx.save();
+    applyCtx();
+    ctx.beginPath();
+    ctx.moveTo(lastX,lastY);
+    ctx.lineTo(x,y);
+    ctx.stroke();
+    ctx.restore();
+    if(currentStroke)currentStroke.pts.push({x,y});
+    lastX=x;lastY=y;
+  } else {
+    if(preSnap)ctx.putImageData(preSnap,0,0);
+    drawShape(ctx,tool,startX,startY,x,y,color,sz,op,false);
+    if(currentStroke)currentStroke.pts=[{x:startX,y:startY},{x,y}];
+  }
+}
+
+function onUp(e){
+  if(panning){panning=false;cv.style.cursor=tool==='text'?'text':'crosshair';return;}
+  if(!drawing)return;
+  drawing=false;
+  const [x,y]=getXY(e);
+  if(['line','rect','circle'].includes(tool)&&preSnap){
+    ctx.putImageData(preSnap,0,0);
+    drawShape(ctx,tool,startX,startY,x,y,color,sz,op,false);
+    if(currentStroke)currentStroke.pts=[{x:startX,y:startY},{x,y}];
+  }
+  // Commit to Yjs
+  if(currentStroke&&currentStroke.pts.length>0){
+    yStrokes.push([currentStroke]);
+  }
+  currentStroke=null;preSnap=null;
+  pushHistory();
+}
+
+function applyCtx(){
+  if(tool==='eraser'){
+    ctx.globalCompositeOperation='destination-out';
+    ctx.globalAlpha=1;
+    ctx.strokeStyle='rgba(0,0,0,1)';
+  } else {
+    ctx.globalCompositeOperation='source-over';
+    ctx.globalAlpha=tool==='marker'?op*.55:op;
+    ctx.strokeStyle=color;
+  }
+  ctx.lineWidth=tool==='brush'?sz*2.5:sz;
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.fillStyle=color;
+}
+
+function drawShape(c,t,x0,y0,x1,y1,col,s,a,doFill){
+  c.save();
+  c.globalCompositeOperation='source-over';
+  c.globalAlpha=a;
+  c.strokeStyle=col;c.fillStyle=col;
+  c.lineWidth=s;c.lineCap='round';c.lineJoin='round';
+  c.beginPath();
+  if(t==='line'){c.moveTo(x0,y0);c.lineTo(x1,y1);c.stroke();}
+  else if(t==='rect'){if(doFill)c.fillRect(x0,y0,x1-x0,y1-y0);c.strokeRect(x0,y0,x1-x0,y1-y0);}
+  else if(t==='circle'){
+    const rx=Math.abs(x1-x0)/2,ry=Math.abs(y1-y0)/2;
+    c.ellipse(x0+(x1-x0)/2,y0+(y1-y0)/2,rx,ry,0,0,Math.PI*2);
+    if(doFill)c.fill();c.stroke();
+  }
+  c.restore();
+}
+
+// Wheel zoom
+cv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=cv.getBoundingClientRect();
+  const mx=e.clientX-r.left,my=e.clientY-r.top;
+  const d=e.deltaY<0?1.1:0.9;
+  const nz=Math.min(10,Math.max(.1,zoom*d));
+  panX=mx-(mx-panX)*(nz/zoom);
+  panY=my-(my-panY)*(nz/zoom);
+  zoom=nz;applyTransform();
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&!e.target.matches('input,textarea')){
+    spaceDown=true;cv.style.cursor='grab';e.preventDefault();
+  }
+  if((e.ctrlKey||e.metaKey)&&e.key==='z'){e.shiftKey?redoAction():undoAction();}
+  if(e.key==='Delete'||e.key==='Backspace'){/* handled in text */}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){spaceDown=false;cv.style.cursor=tool==='text'?'text':'crosshair';}
+});
+
+// ═══════════════════════════════════════════════
+//  YJS SYNC — replay remote strokes
+// ═══════════════════════════════════════════════
+let renderedCount=0;
+
+yStrokes.observe(()=>{
+  const all=yStrokes.toArray();
+  for(let i=renderedCount;i<all.length;i++){
+    replayStroke(all[i]);
+  }
+  renderedCount=all.length;
+});
+
+function replayStroke(s){
+  if(!s||!s.pts||s.pts.length===0)return;
+  ctx.save();
+  ctx.globalCompositeOperation = s.tool==='eraser'?'destination-out':'source-over';
+  ctx.globalAlpha = s.tool==='eraser'?1:s.op;
+  ctx.strokeStyle = s.color;
+  ctx.fillStyle = s.color;
+  ctx.lineWidth = s.tool==='brush'?s.size*2.5:s.size;
+  ctx.lineCap='round';ctx.lineJoin='round';
+
+  if(['pen','brush','marker','eraser'].includes(s.tool)){
+    ctx.beginPath();
+    ctx.moveTo(s.pts[0].x,s.pts[0].y);
+    for(let i=1;i<s.pts.length;i++) ctx.lineTo(s.pts[i].x,s.pts[i].y);
+    ctx.stroke();
+  } else if(s.pts.length>=2){
+    drawShape(ctx,s.tool,s.pts[0].x,s.pts[0].y,s.pts[1].x,s.pts[1].y,s.color,s.size,s.op,false);
+  }
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════
+//  REMOTE CURSORS
+// ═══════════════════════════════════════════════
+const cursorEls={};
+function drawRemoteCursors(){
+  const states=awareness.getStates();
+  const cvRect=cv.getBoundingClientRect();
+  states.forEach((state,id)=>{
+    if(id===myId||!state.cursor)return;
+    const cx=state.cursor.x*zoom+panX+cvRect.left;
+    const cy=state.cursor.y*zoom+panY+cvRect.top;
+    if(!cursorEls[id]){
+      const el=document.createElement('div');
+      el.className='r-cursor';
+      el.innerHTML=`<svg width="14" height="18" viewBox="0 0 14 18" fill="none"><path d="M0 0L0 14L4 10L7 17L9 16L6 9L11 9Z" fill="${state.color||'#333'}"/></svg><span>${state.name||'...'}</span>`;
+      document.body.appendChild(el);
+      cursorEls[id]=el;
+    }
+    cursorEls[id].style.left=cx+'px';
+    cursorEls[id].style.top=cy+'px';
+  });
+  // Remove stale
+  Object.keys(cursorEls).forEach(id=>{
+    if(!states.has(+id)){cursorEls[id].remove();delete cursorEls[id];}
+  });
+}
+awareness.on('change',drawRemoteCursors);
+
+// ═══════════════════════════════════════════════
+//  TEXT TOOL
+// ═══════════════════════════════════════════════
+function addText(x,y){
+  const r=cv.getBoundingClientRect();
+  const inp=document.createElement('input');
+  inp.type='text';inp.placeholder='Текст...';
+  inp.style.cssText=`position:fixed;left:${x*zoom+panX+r.left}px;top:${y*zoom+panY+r.top}px;
+    background:transparent;border:none;border-bottom:1.5px solid #1a1a1a;
+    color:${color};font-family:'Inter',sans-serif;font-size:${Math.max(12,sz*2.2)}px;
+    font-weight:500;outline:none;z-index:500;min-width:100px;`;
+  document.body.appendChild(inp);inp.focus();
+  const commit=()=>{
+    const v=inp.value.trim();
+    if(v){
+      ctx.save();ctx.globalAlpha=op;ctx.fillStyle=color;
+      ctx.font=`500 ${Math.max(12,sz*2.2)}px Inter,sans-serif`;
+      ctx.fillText(v,x,y);ctx.restore();
+      yStrokes.push([{tool:'text',color,size:sz,op,text:v,pts:[{x,y}]}]);
+      pushHistory();
+    }
+    inp.remove();
+  };
+  inp.addEventListener('blur',commit);
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter')inp.blur();if(e.key==='Escape'){inp.value='';inp.blur();}});
+}
+
+// Replay text from Yjs
+const origReplay=replayStroke;
+function replayStrokeExt(s){
+  if(s.tool==='text'&&s.text&&s.pts?.length){
+    ctx.save();ctx.globalAlpha=s.op;ctx.fillStyle=s.color;
+    ctx.font=`500 ${Math.max(12,s.size*2.2)}px Inter,sans-serif`;
+    ctx.fillText(s.text,s.pts[0].x,s.pts[0].y);ctx.restore();
+    return;
+  }
+  origReplay(s);
+}
+// Override
+yStrokes.observe.toString; // keep ref
+// Monkey-patch the observer to use extended version
+const allStrokes=yStrokes.toArray();
+for(let i=0;i<allStrokes.length;i++) replayStrokeExt(allStrokes[i]);
+renderedCount=allStrokes.length;
+
+// Re-observe with extended
+yStrokes.unobserve(()=>{});
+yStrokes.observe(()=>{
+  const all=yStrokes.toArray();
+  for(let i=renderedCount;i<all.length;i++) replayStrokeExt(all[i]);
+  renderedCount=all.length;
+});
+
+// ═══════════════════════════════════════════════
+//  IMAGE UPLOAD
+// ═══════════════════════════════════════════════
+function uploadImg(){document.getElementById('imgFile').click();}
+function onImgFile(e){
+  const f=e.target.files[0];if(!f)return;
+  e.target.value='';
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const img=new Image();
+    img.onload=()=>{
+      const mw=Math.min(300,dc.width*.4);
+      const w=mw,h=img.height*(mw/img.width);
+      const x=(dc.width/2-w/2-panX)/zoom;
+      const y=(dc.height/2-h/2-panY)/zoom;
+      ctx.drawImage(img,x,y,w/zoom,h/zoom);
+      yStrokes.push([{tool:'image',src:ev.target.result,pts:[{x,y}],size:w/zoom,op:1}]);
+      pushHistory();
+    };
+    img.src=ev.target.result;
+  };
+  reader.readAsDataURL(f);
+  setTool('pen');
+}
+
+// Replay image strokes
+const yObs=()=>{
+  const all=yStrokes.toArray();
+  for(let i=renderedCount;i<all.length;i++){
+    const s=all[i];
+    if(s.tool==='image'&&s.src&&s.pts?.length){
+      const img=new Image();
+      img.onload=()=>{
+        const aspect=img.height/img.width;
+        ctx.drawImage(img,s.pts[0].x,s.pts[0].y,s.size,s.size*aspect);
+      };
+      img.src=s.src;
+    } else {
+      replayStrokeExt(s);
+    }
+    renderedCount++;
+  }
+};
+// Final observer
+yStrokes.unobserve(()=>{});
+yStrokes.observe(yObs);
+// initial load
+yObs();
+
+// ═══════════════════════════════════════════════
+//  UNDO / REDO  (local snapshots)
+// ═══════════════════════════════════════════════
+let hist=[],histIdx=-1;
+function pushHistory(){
+  hist=hist.slice(0,histIdx+1);
+  hist.push(dc.toDataURL());
+  if(hist.length>25)hist.shift();
+  histIdx=hist.length-1;
+}
+function undoAction(){
+  if(histIdx<=0)return;
+  histIdx--;
+  loadSnap(hist[histIdx]);
+}
+function redoAction(){
+  if(histIdx>=hist.length-1)return;
+  histIdx++;
+  loadSnap(hist[histIdx]);
+}
+function loadSnap(url){
+  const img=new Image();
+  img.onload=()=>{ctx.clearRect(0,0,dc.width,dc.height);ctx.drawImage(img,0,0);};
+  img.src=url;
+}
+pushHistory(); // initial
+
+// ═══════════════════════════════════════════════
+//  SAVE / SHARE
+// ═══════════════════════════════════════════════
+function saveImg(){
+  const a=document.createElement('a');
+  a.download=`canvas-${ROOM}.png`;
+  a.href=dc.toDataURL('image/png');
+  a.click();
+  toast('💾 Сохранено!');
+}
+function share(){
+  const url=location.href;
+  if(navigator.clipboard)navigator.clipboard.writeText(url).then(()=>toast('🔗 Ссылка скопирована!'));
+  else prompt('Ссылка:',url);
+}
+
+// ═══════════════════════════════════════════════
+//  GITHUB GIST SAVE
+// ═══════════════════════════════════════════════
+const GH_KEY='together_gh_token';
+const GH_GIST_KEY='together_gh_gist_'+ROOM;
+
+function openGhModal(){
+  const stored=localStorage.getItem(GH_KEY)||'';
+  document.getElementById('ghTokenInput').value=stored;
+  const gistId=localStorage.getItem(GH_GIST_KEY);
+  document.getElementById('ghGistInfo').textContent=gistId?'Обновит существующий Gist: '+gistId:'Создаст новый Gist для комнаты '+ROOM;
+  document.getElementById('ghModal').classList.add('open');
+}
+function closeGhModal(){document.getElementById('ghModal').classList.remove('open');}
+
+async function doGhSave(){
+  const token=document.getElementById('ghTokenInput').value.trim();
+  if(!token){toast('⚠️ Введи токен');return;}
+  localStorage.setItem(GH_KEY,token);
+  closeGhModal();
+  toast('⏳ Сохраняю в GitHub...');
+
+  const canvasData=dc.toDataURL('image/jpeg',.85);
+  const strokesJson=JSON.stringify(yStrokes.toArray());
+  const payload={
+    description:`Together Canvas — комната ${ROOM}`,
+    public:false,
+    files:{
+      [`canvas-${ROOM}.json`]:{content: JSON.stringify({
+        room:ROOM,
+        saved:new Date().toISOString(),
+        strokes: yStrokes.toArray()
+      }, null, 2)},
+      [`canvas-${ROOM}-preview.txt`]:{content:`data:image/jpeg;base64 preview stored in canvas-${ROOM}.json`}
+    }
+  };
+
+  const existingId=localStorage.getItem(GH_GIST_KEY);
+  const url=existingId?`https://api.github.com/gists/${existingId}`:'https://api.github.com/gists';
+  const method=existingId?'PATCH':'POST';
+
+  try{
+    const r=await fetch(url,{method,headers:{'Authorization':'token '+token,'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok){const e=await r.json();toast('❌ '+( e.message||r.status));return;}
+    const data=await r.json();
+    localStorage.setItem(GH_GIST_KEY,data.id);
+    toast('✅ Сохранено в GitHub Gist!');
+    document.getElementById('ghBtn').title='Gist: '+data.html_url;
+  }catch(err){
+    toast('❌ Ошибка: '+err.message);
+  }
+}
+
+// Load from Gist on first join (if gist exists and user has token)
+async function tryLoadFromGist(){
+  const token=localStorage.getItem(GH_KEY);
+  const gistId=localStorage.getItem(GH_GIST_KEY);
+  if(!token||!gistId)return;
+  try{
+    const r=await fetch(`https://api.github.com/gists/${gistId}`,{headers:{'Authorization':'token '+token}});
+    if(!r.ok)return;
+    const data=await r.json();
+    const file=data.files[`canvas-${ROOM}.json`];
+    if(!file)return;
+    const saved=JSON.parse(file.content);
+    if(!saved.strokes||saved.strokes.length===0)return;
+    // Only load if canvas is blank (ydoc has no strokes yet)
+    if(yStrokes.length>0)return;
+    saved.strokes.forEach(s=>yStrokes.push([s]));
+    toast('📂 Полотно загружено из GitHub');
+  }catch(e){/* silently fail */}
+}
+setTimeout(tryLoadFromGist,1200);
+
+// ═══════════════════════════════════════════════
+//  TOAST
+// ═══════════════════════════════════════════════
+let toastTimer;
+function toast(msg,dur=2800){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),dur);
+}
+</script>
+</body>
+</html>
